@@ -1,0 +1,188 @@
+---
+title: "基于 OpenCV LBPH 算法的人脸识别项目"
+author: "吕博文及小组成员"
+date: "2026-04-03"
+repo-url: "https://github.com/D2RS-2026spring/python-face-recognition"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: false
+execute:
+  eval: false
+---
+
+> 📦 **源代码**: [GitHub 仓库](https://github.com/D2RS-2026spring/python-face-recognition)
+
+## 研究背景
+
+本项目实现基于 OpenCV LBPH (Local Binary Patterns Histograms) 算法的轻量级人脸识别系统。由于 Python 3.13 暂不支持 dlib，采用 OpenCV 替代方案实现人脸检测与识别。
+
+## 环境配置
+
+### 安装依赖
+
+```{python}
+# 卸载普通版 opencv-python（如果已安装）
+!pip uninstall opencv-python -y
+
+# 安装包含人脸识别模块的完整版
+!pip install opencv-contrib-python numpy
+```
+
+### 算法原理
+
+**LBPH (Local Binary Patterns Histograms)** 是一种经典的人脸识别算法：
+
+1. **局部二值模式 (LBP)**：对每个像素与其邻居比较，生成二进制编码
+2. **直方图统计**：将图像划分为网格，统计每个网格的 LBP 直方图
+3. **特征匹配**：通过比较直方图距离进行人脸识别
+
+**优势：**
+- 计算速度快，适合实时识别
+- 对光照变化有较好的鲁棒性
+- 无需深度学习框架，轻量级部署
+
+## 项目结构
+
+```
+python-face-recognition/
+├── src/
+│   ├── daima.py              # 主程序代码
+│   └── training_data.zip     # 训练数据（人脸照片）
+├── renlian1.zip              # 额外数据
+├── README.md
+└── LICENSE
+```
+
+## 核心代码
+
+### 人脸检测与识别器初始化
+
+```{python}
+import cv2
+import os
+import numpy as np
+
+# 创建 LBPH 人脸识别器
+recognizer = cv2.face.LBPHFaceRecognizer_create()
+
+# 加载 Haar 级联分类器用于人脸检测
+face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+detector = cv2.CascadeClassifier(face_cascade_path)
+```
+
+### 训练数据加载
+
+```{python}
+def get_images_and_labels(path):
+    """加载图片并提取人脸特征"""
+    image_paths = [os.path.join(path, f) for f in os.listdir(path)
+                   if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))]
+
+    face_samples = []
+    ids = []
+    id_map = {}
+    current_id = 0
+
+    for image_path in image_paths:
+        filename = os.path.basename(image_path)
+        name = os.path.splitext(filename)[0]
+
+        if name not in id_map:
+            id_map[name] = current_id
+            current_id += 1
+
+        # 读取并转换为灰度图
+        img = cv2.imread(image_path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # 检测人脸
+        faces = detector.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5)
+
+        if len(faces) > 0:
+            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+            face_roi = gray[y:y+h, x:x+w]
+            face_samples.append(face_roi)
+            ids.append(id_map[name])
+
+    id_to_name = {v: k for k, v in id_map.items()}
+    return face_samples, ids, id_to_name
+```
+
+### 模型训练
+
+```{python}
+# 加载训练数据
+faces, ids, id_to_name = get_images_and_labels('training_data')
+
+# 训练 LBPH 模型
+recognizer.train(faces, np.array(ids))
+print(f"训练完成！可识别人员: {list(id_to_name.values())}")
+```
+
+### 实时识别
+
+```{python}
+# 启动摄像头
+cam = cv2.VideoCapture(0)
+
+while True:
+    ret, img = cam.read()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 检测人脸
+    faces = detector.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+
+    for (x, y, w, h) in faces:
+        face_roi = gray[y:y+h, x:x+w]
+        person_id, confidence = recognizer.predict(face_roi)
+
+        # 置信度判断（越小越像）
+        if confidence < 70:
+            name = id_to_name.get(person_id, "Unknown")
+            color = (0, 255, 0)  # 绿色：识别成功
+        elif confidence < 100:
+            name = id_to_name.get(person_id, "Unknown") + "?"
+            color = (0, 165, 255)  # 橙色：可能匹配
+        else:
+            name = "Unknown"
+            color = (0, 0, 255)  # 红色：未识别
+
+        # 绘制框和标签
+        cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)
+        cv2.putText(img, name, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    cv2.imshow('Face Recognition', img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cam.release()
+cv2.destroyAllWindows()
+```
+
+## 使用说明
+
+### 训练阶段
+
+1. 将训练照片放入 `training_data/` 目录
+2. 照片命名格式：`人名.jpg`（例如：`张三.jpg`）
+3. 运行程序后自动扫描、检测人脸、训练模型
+
+### 实时识别
+
+- **绿色框 + 名字**：识别成功（置信度 > 70%）
+- **橙色框 + 名字?**：可能匹配（置信度 70-100%）
+- **红色框 + Unknown**：未识别（置信度 < 70%）
+
+### 按键控制
+
+| 按键 | 功能 |
+|------|------|
+| `q` | 退出程序 |
+| `s` | 保存当前截图 |
+
+## 团队分工
+
+- **吕博文**：项目组长，负责算法实现与系统集成
+- **小组成员**：参与数据采集与测试
